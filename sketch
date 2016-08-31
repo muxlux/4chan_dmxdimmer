@@ -1,0 +1,86 @@
+
+/*
+ AC Light Control
+ 
+ Ryan McLaughlin <ryanjmclaughlin@gmail.com>
+ 
+ The hardware consists of an Triac to act as an A/C switch and
+ an opto-isolator to give us a zero-crossing reference.
+ The software uses two interrupts to control dimming of the light.
+ The first is a hardware interrupt to detect the zero-cross of
+ the AC sine wave, the second is software based and always running
+ at 1/128 of the AC wave speed. After the zero-cross is detected
+ the function check to make sure the proper dimming level has been
+ reached and the light is turned on mid-wave, only providing
+ partial current and therefore dimming our AC load.
+ 
+ Thanks to http://www.andrewkilpatrick.org/blog/?page_id=445
+   and http://www.hoelscher-hi.de/hendrik/english/dimmer.htm
+ 
+*/
+
+#include <TimerOne.h>                        // Avaiable from http://www.arduino.cc/playground/Code/Timer1
+
+volatile int i[4], j;                        // Variable to use as a counter
+volatile boolean zero_cross[4] = {0,0,0,0};  // Boolean to store a "switch" to tell us if we have crossed zero
+int AC[4] = {4,5,6,7};                       // Setup the AC output pins
+int ACenable[4] = {1,1,1,1};                 // Enable dimming for this output
+int output[4] = {0,0,0,0};                 // Create output vars for Dimming level (0-128)  0 = on, 128 = 0ff
+int dim = 0;                                 // Dimming level (0-128)  0 = on, 128 = 0ff
+int freqStep = 565;                           // Set the delay for the frequency of power (65 for 60Hz, 78 for 50Hz) per step (using 128 steps)
+                                            // freqStep may need some adjustment depending on your power the formula
+                                            // you need to us is (500000/AC_freq)/NumSteps = freqStep
+                                            // You could also write a seperate function to determine the freq
+
+void setup() {                                      // Begin setup
+ pinMode(AC[0], OUTPUT);                           // Set the Triac pin as output
+ pinMode(AC[1], OUTPUT);                           // Set the Triac pin as output
+ pinMode(AC[2], OUTPUT);                           // Set the Triac pin as output
+ pinMode(AC[3], OUTPUT);                           // Set the Triac pin as output
+
+ attachInterrupt(0, zero_cross_detect, FALLING);   // Attach an Interupt to Pin 2 (interupt 0) for Zero Cross Detection
+ Timer1.initialize(freqStep);                      // Initialize TimerOne library for the freq we need
+ Timer1.attachInterrupt(output_check, freqStep);   // Use the TimerOne Library to attach an interrupt
+                                                   // to the function we use to check to see if it is
+                                                   // the right time to fire the triac.  This function
+                                                   // will now run every freqStep in microseconds.  
+ Serial.begin(9600);                                        
+}                                                   // End setup
+ 
+void zero_cross_detect() {                 // function to be fired at the zero crossing                          
+   zero_cross[0] = 1;                     // set the boolean to true to tell our dimming function that a zero cross has occured
+   zero_cross[1] = 1;
+   zero_cross[2] = 1;
+   zero_cross[3] = 1;
+}                                          // End zero_cross_detect
+
+void output_check() {                        // Function will fire the triac at the proper time
+
+ for( j=0; j<4; j++ ) {                     // Loop this function for each one of the outputs
+   if(zero_cross[j]) {                      // First check to make sure the zero-cross has happened else do nothing
+     if(i[j] >= output[j] && ACenable[j]) { // Check and see if i has accumilated to the dimming value we want
+       digitalWrite(AC[j], HIGH);           // Fire the Triac mid-phase
+       delayMicroseconds(2);                // Pause briefly to ensure the triac turned on
+       digitalWrite(AC[j], LOW);            // Turn off the Triac gate (Triac will not turn off until next zero cross)  
+       i[j]=0;                              // If we fired the triac, reset the counters
+       zero_cross[j] = 0;                   // Reset the zero cross detection
+     } else {
+       i[j]++;                              // if nothing is done incriment th counter
+     }
+   }                                        // End zero_cross check
+ }                                          // End each loop
+}                                            // End output_check function
+
+void loop() {                        // Main Loop
+ for( int k=0; k < 128; k++ ) {     // Slowly fade out all channels at the same time
+   output[0] = k;
+   output[1] = k;
+   output[2] = k;
+   output[3] = k;
+   
+   Serial.print("Output Level:\t"); // Print the current output level over serial
+   Serial.println(output[0]);
+   
+   delay(200);                      // Delay after each step to slow down the fade
+ }
+}
